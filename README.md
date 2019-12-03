@@ -222,7 +222,7 @@ func (node *Node) dispatchMsg() {
 
 处理时仍然分成三种情况来处理，但`RequestMsg`, `PrePrepareMsg`,这两种处理方式实质上是基本一致的，具体执行操作流程图如下：
 
-<img src="E:\gitRepository\goPBFT\routeMsg1.png" alt="routeMsg1" style="zoom:75%;" />
+<img src="https://github.com/dengchengH/goPBFT/blob/master/routeMsg1.png?raw=true" alt="routeMsg1" style="zoom:75%;" />
 
 逻辑代码如下：
 
