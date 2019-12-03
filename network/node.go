@@ -2,6 +2,10 @@ package network
 
 import (
 	"goPBFT/consensus"
+	"encoding/json"
+	"fmt"
+	"errors"
+	"time"
 )
 
 // 首先对节点进行定义
@@ -222,4 +226,292 @@ func (node *Node) routeMsgWhenAlarmed() []error {
 	}
 
 	return nil
+}
+
+func (node *Node) alarmToDispatcher() {
+	for {
+		time.Sleep(ResolvingTimeDuration)
+		node.Alarm <- true
+	}
+}
+
+func (node *Node) resolveMsg() {
+	// 处理的是刚才在 buffer 中保存的信息
+	for {
+		msgs := <- node.MsgDelivery
+		switch msgs.(type) {
+		// 处理 requestMsg
+		case []*consensus.RequestMsg:
+			errs := node.resolveRequestMsg(msgs.([]*consensus.RequestMsg))
+			if len(errs) != 0 {
+				for _, err := range errs {
+					fmt.Println(err)
+				}
+				// TODO: send err to ErrorChannel
+			}
+		case []*consensus.PrePrepareMsg:
+			// 处理 prepreparemsg
+			errs := node.resolvePrePrepareMsg(msgs.([]*consensus.PrePrepareMsg))
+			if len(errs) != 0 {
+				for _, err := range errs {
+					fmt.Println(err)
+				}
+				// TODO: send err to ErrorChannel
+			}
+		case []*consensus.VoteMsg:
+			voteMsgs := msgs.([]*consensus.VoteMsg)
+			if len(voteMsgs) == 0 {
+				break
+			}
+			// 处理投票信息中的 prepareMsg
+			if voteMsgs[0].MsgType == consensus.PrepareMsg {
+				errs := node.resolvePrepareMsg(voteMsgs)
+				if len(errs) != 0 {
+					for _, err := range errs {
+						fmt.Println(err)
+					}
+					// TODO: send err to ErrorChannel
+				}
+			} else if voteMsgs[0].MsgType == consensus.CommitMsg {
+				// 处理投票信息中的 commitMsg
+				errs := node.resolveCommitMsg(voteMsgs)
+				if len(errs) != 0 {
+					for _, err := range errs {
+						fmt.Println(err)
+					}
+					// TODO: send err to ErrorChannel
+				}
+			}
+		}
+	}
+}
+
+func (node *Node) resolveRequestMsg(msgs []*consensus.RequestMsg) []error {
+	errs := make([]error, 0)
+
+	for _, reqMsg := range msgs {
+		err := node.GetReq(reqMsg)
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) != 0 {
+		return errs
+	}
+	return nil
+}
+
+// GetReq can be called when the node's CurrentState is nil.
+// Consensus start procedure for the Primary.
+func (node *Node) GetReq(reqMsg *consensus.RequestMsg) error {
+	LogMsg(reqMsg)
+
+	// 为共识创建一个新状态
+	err := node.createStateForNewConsensus()
+	if err != nil {
+		return err
+	}
+
+	// 开始执行共识
+	prePrepareMsg, err := node.CurrentState.StartConsensus(reqMsg)
+	if err != nil {
+		return nil
+	}
+
+	LogStage(fmt.Sprintf("Consensus Process (ViewID:%d)", node.CurrentState.ViewID), false)
+
+	// 发送 getPrePrepare 信息
+	if prePrepareMsg != nil {
+		node.Broadcast(prePrepareMsg, "/preprepare")
+		LogStage("Pre-prepare", true)
+	}
+	return nil
+}
+
+func (node *Node) resolvePrePrepareMsg(msgs []*consensus.PrePrepareMsg) []error {
+	errs := make([]error, 0)
+
+	for _, reqMsg := range msgs {
+		err := node.GetPrePrepare(reqMsg)
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) != 0 {
+		return errs
+	}
+	return nil
+}
+
+// GetPrePrepare can be called when the node's CurrentState is nil.
+// Consensus start procedure for normal participants.
+func (node *Node) GetPrePrepare(prePrepareMsg *consensus.PrePrepareMsg) error {
+	LogMsg(prePrepareMsg)
+	// Create a new state for the new consensus.
+	err := node.createStateForNewConsensus()
+	if err != nil {
+		return err
+	}
+
+	prePareMsg, err := node.CurrentState.PrePrepare(prePrepareMsg)
+	if err != nil {
+		return err
+	}
+
+	if prePareMsg != nil {
+		// Attach node ID to the message
+		prePareMsg.NodeID = node.NodeID
+
+		LogStage("Pre-prepare", true)
+		node.Broadcast(prePareMsg, "/prepare")
+		LogStage("Prepare", false)
+	}
+	return nil
+}
+
+// 两个是属于同一个类的，因此该函数与后面一个函数参数类型是一样的
+func (node *Node) resolvePrepareMsg(msgs []*consensus.VoteMsg) []error {
+	errs := make([]error, 0)
+
+	// Resolve messages
+	for _, prepareMsg := range msgs {
+		err := node.GetPrepare(prepareMsg)
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) != 0 {
+		return errs
+	}
+
+	return nil
+}
+
+func (node *Node) GetPrepare(prepareMsg *consensus.VoteMsg) error {
+	LogMsg(prepareMsg)
+
+	commitMsg, err := node.CurrentState.Prepare(prepareMsg)
+	if err != nil {
+		return err
+	}
+
+	if commitMsg != nil {
+		// Attach node ID to the message
+		commitMsg.NodeID = node.NodeID
+
+		LogStage("Prepare", true)
+		node.Broadcast(commitMsg, "/commit")
+		LogStage("Commit", false)
+	}
+
+	return nil
+}
+
+func (node *Node) resolveCommitMsg(msgs []*consensus.VoteMsg) []error {
+	errs := make([]error, 0)
+
+	// Resolve messages
+	for _, commitMsg := range msgs {
+		err := node.GetCommit(commitMsg)
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) != 0 {
+		return errs
+	}
+
+	return nil
+}
+
+func (node *Node) GetCommit(prepareMsg *consensus.VoteMsg) error {
+	LogMsg(prepareMsg)
+	replyMsg, committedMsg, err := node.CurrentState.Commit(prepareMsg)
+	if err != nil {
+		return err
+	}
+
+	if replyMsg != nil {
+		if committedMsg == nil {
+			return errors.New("committed message is nil, even though the reply message is not nil")
+		}
+
+		// Attach node ID to the message
+		replyMsg.NodeID = node.NodeID
+
+		// Save the last version of committed messages to node.
+		node.CommitMsgs = append(node.CommitMsgs, committedMsg)
+
+		LogStage("Commit", true)
+		node.Reply(replyMsg)
+		LogStage("Reply", true)
+	}
+
+	return nil
+}
+
+func (node *Node) GetReply(msg *consensus.ReplyMsg) {
+	fmt.Printf("Result: %s by %s\n", msg.Result, msg.NodeID)
+}
+
+func (node *Node) createStateForNewConsensus() error {
+	// 先检查是否有存在的共识机制
+	if node.CurrentState != nil {
+		return errors.New("another consensus is ongoing")
+	}
+
+	// 获取最后一个序列ID
+	var lastSequenceID int64
+	if len(node.CommitMsgs) == 0 {
+		lastSequenceID = -1
+	} else {
+		lastSequenceID = node.CommitMsgs[len(node.CommitMsgs)-1].SequenceID
+	}
+
+	// 创建一个新的共识
+	node.CurrentState = consensus.CreateState(node.View.ID, lastSequenceID)
+	LogStage("Create the replica status", true)
+
+	return nil
+}
+
+func (node *Node) Reply(msg *consensus.ReplyMsg) error {
+	for _, value := range node.CommitMsgs {
+		fmt.Printf("Committed value: %s, %d, %s, %d", value.ClinetID, value.Timestamp, value.Operation, value.SequenceID)
+	}
+	fmt.Print("\n")
+
+	jsonMsg, err := json.Marshal(msg)
+	if err != nil {
+		return nil
+	}
+	send(node.NodeTable[node.View.Primary]+"/reply", jsonMsg)
+
+	return nil
+}
+
+func (node *Node) Broadcast(msg interface{}, path string) map[string]error {
+	errorMap := make(map[string]error)
+
+	for nodeID, url := range node.NodeTable {
+		if nodeID == node.NodeID {
+			continue
+		}
+
+		jsonMsg, err := json.Marshal(msg)
+		if err != nil {
+			errorMap[nodeID] = err
+			continue
+		}
+
+		send(url + path, jsonMsg)
+	}
+
+	if len(errorMap) == 0 {
+		return nil
+	} else {
+		return errorMap
+	}
 }
