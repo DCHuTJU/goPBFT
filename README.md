@@ -266,7 +266,7 @@ if node.CurrentState == nil || node.CurrentState.CurrentStage != consensus.Prepa
 
 在该方法中，对于四种信息的处理方式是完全一致的，唯一的区别的就是执行条件（同上一节的内容）。具体处理流程如下：
 
-<img src="E:\gitRepository\goPBFT\routeMsgWhenAlarmed.png" alt="routeMsgWhenAlarmed" style="zoom:75%;" />
+<img src="https://github.com/dengchengH/goPBFT/blob/master/routeMsgWhenAlarmed.png?raw=true" alt="routeMsgWhenAlarmed" style="zoom:75%;" />
 
 逻辑代码如下：
 
