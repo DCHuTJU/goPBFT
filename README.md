@@ -260,7 +260,7 @@ if node.CurrentState == nil || node.CurrentState.CurrentStage != consensus.Prepa
 
 流程图如下所示：
 
-<img src="E:\gitRepository\goPBFT\routeMsg2.png" alt="routeMsg2" style="zoom:75%;" />
+<img src="https://github.com/dengchengH/goPBFT/blob/master/routeMsg2.png?raw=true" alt="routeMsg2" style="zoom:75%;" />
 
 ##### 3.1.2 node.routeMsgWhenAlarmed
 
